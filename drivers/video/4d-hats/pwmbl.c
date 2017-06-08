@@ -32,7 +32,7 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 
-#include <mach/platform.h>
+#include "platform.h"
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0))
 #include <mach/dma.h>
