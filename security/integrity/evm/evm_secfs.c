@@ -13,6 +13,8 @@
  *	- Get the key and enable EVM
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/uaccess.h>
 #include <linux/module.h>
 #include "evm.h"
@@ -38,7 +40,7 @@ static ssize_t evm_read_key(struct file *filp, char __user *buf,
 	if (*ppos != 0)
 		return 0;
 
-	sprintf(temp, "%d", evm_initialized);
+	sprintf(temp, "%d", (evm_initialized & ~EVM_SETUP));
 	rc = simple_read_from_buffer(buf, count, ppos, temp, strlen(temp));
 
 	return rc;
@@ -59,29 +61,30 @@ static ssize_t evm_read_key(struct file *filp, char __user *buf,
 static ssize_t evm_write_key(struct file *file, const char __user *buf,
 			     size_t count, loff_t *ppos)
 {
-	char temp[80];
-	int i, error;
+	int i, ret;
 
-	if (!capable(CAP_SYS_ADMIN) || evm_initialized)
+	if (!capable(CAP_SYS_ADMIN) || (evm_initialized & EVM_SETUP))
 		return -EPERM;
 
-	if (count >= sizeof(temp) || count == 0)
+	ret = kstrtoint_from_user(buf, count, 0, &i);
+
+	if (ret)
+		return ret;
+
+	/* Reject invalid values */
+	if (!i || (i & ~EVM_INIT_MASK) != 0)
 		return -EINVAL;
 
-	if (copy_from_user(temp, buf, count) != 0)
-		return -EFAULT;
+	if (i & EVM_INIT_HMAC) {
+		ret = evm_init_key();
+		if (ret != 0)
+			return ret;
+		/* Forbid further writes after the symmetric key is loaded */
+		i |= EVM_SETUP;
+	}
 
-	temp[count] = '\0';
+	evm_initialized |= i;
 
-	if ((sscanf(temp, "%d", &i) != 1) || (i != 1))
-		return -EINVAL;
-
-	error = evm_init_key();
-	if (!error) {
-		evm_initialized = 1;
-		pr_info("EVM: initialized\n");
-	} else
-		pr_err("EVM: initialization failed\n");
 	return count;
 }
 
@@ -99,10 +102,4 @@ int __init evm_init_secfs(void)
 	if (!evm_init_tpm || IS_ERR(evm_init_tpm))
 		error = -EFAULT;
 	return error;
-}
-
-void __exit evm_cleanup_secfs(void)
-{
-	if (evm_init_tpm)
-		securityfs_remove(evm_init_tpm);
 }

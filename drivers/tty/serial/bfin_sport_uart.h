@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Blackfin On-Chip Sport Emulated UART Driver
  *
  * Copyright 2006-2008 Analog Devices Inc.
  *
  * Enter bugs at http://blackfin.uclinux.org/
- *
- * Licensed under the GPL-2 or later.
  */
 
 /*
@@ -45,11 +44,12 @@
 #define SPORT_GET_RX32(sport) \
 ({ \
 	unsigned int __ret; \
+	unsigned long flags; \
 	if (ANOMALY_05000473) \
-		local_irq_disable(); \
+		local_irq_save(flags); \
 	__ret = bfin_read32((sport)->port.membase + OFFSET_RX); \
 	if (ANOMALY_05000473) \
-		local_irq_enable(); \
+		local_irq_restore(flags); \
 	__ret; \
 })
 #define SPORT_GET_RCR1(sport)		bfin_read16(((sport)->port.membase + OFFSET_RCR1))

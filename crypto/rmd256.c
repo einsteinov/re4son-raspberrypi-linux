@@ -228,8 +228,6 @@ static void rmd256_transform(u32 *state, const __le32 *in)
 	state[5] += bbb;
 	state[6] += ccc;
 	state[7] += ddd;
-
-	return;
 }
 
 static int rmd256_init(struct shash_desc *desc)
@@ -346,3 +344,4 @@ module_exit(rmd256_mod_fini);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Adrian-Ken Rueegsegger <ken@codelabs.ch>");
 MODULE_DESCRIPTION("RIPEMD-256 Message Digest");
+MODULE_ALIAS_CRYPTO("rmd256");

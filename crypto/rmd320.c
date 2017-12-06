@@ -275,8 +275,6 @@ static void rmd320_transform(u32 *state, const __le32 *in)
 	state[7] += ccc;
 	state[8] += ddd;
 	state[9] += eee;
-
-	return;
 }
 
 static int rmd320_init(struct shash_desc *desc)
@@ -395,3 +393,4 @@ module_exit(rmd320_mod_fini);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Adrian-Ken Rueegsegger <ken@codelabs.ch>");
 MODULE_DESCRIPTION("RIPEMD-320 Message Digest");
+MODULE_ALIAS_CRYPTO("rmd320");

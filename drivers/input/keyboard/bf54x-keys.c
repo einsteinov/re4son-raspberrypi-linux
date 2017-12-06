@@ -30,7 +30,6 @@
 
 #include <linux/module.h>
 
-#include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
@@ -128,10 +127,9 @@ static inline void bfin_kpad_clear_irq(void)
 	bfin_write_KPAD_ROWCOL(0xFFFF);
 }
 
-static void bfin_kpad_timer(unsigned long data)
+static void bfin_kpad_timer(struct timer_list *t)
 {
-	struct platform_device *pdev =  (struct platform_device *) data;
-	struct bf54x_kpad *bf54x_kpad = platform_get_drvdata(pdev);
+	struct bf54x_kpad *bf54x_kpad = from_timer(bf54x_kpad, t, timer);
 
 	if (bfin_kpad_get_keypressed(bf54x_kpad)) {
 		/* Try again later */
@@ -177,10 +175,10 @@ static irqreturn_t bfin_kpad_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit bfin_kpad_probe(struct platform_device *pdev)
+static int bfin_kpad_probe(struct platform_device *pdev)
 {
 	struct bf54x_kpad *bf54x_kpad;
-	struct bfin_kpad_platform_data *pdata = pdev->dev.platform_data;
+	struct bfin_kpad_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct input_dev *input;
 	int i, error;
 
@@ -269,8 +267,6 @@ static int __devinit bfin_kpad_probe(struct platform_device *pdev)
 	input->phys = "bf54x-keys/input0";
 	input->dev.parent = &pdev->dev;
 
-	input_set_drvdata(input, bf54x_kpad);
-
 	input->id.bustype = BUS_HOST;
 	input->id.vendor = 0x0001;
 	input->id.product = 0x0001;
@@ -289,7 +285,8 @@ static int __devinit bfin_kpad_probe(struct platform_device *pdev)
 		__set_bit(EV_REP, input->evbit);
 
 	for (i = 0; i < input->keycodemax; i++)
-		__set_bit(bf54x_kpad->keycode[i] & KEY_MAX, input->keybit);
+		if (bf54x_kpad->keycode[i] <= KEY_MAX)
+			__set_bit(bf54x_kpad->keycode[i], input->keybit);
 	__clear_bit(KEY_RESERVED, input->keybit);
 
 	error = input_register_device(input);
@@ -300,7 +297,7 @@ static int __devinit bfin_kpad_probe(struct platform_device *pdev)
 
 	/* Init Keypad Key Up/Release test timer */
 
-	setup_timer(&bf54x_kpad->timer, bfin_kpad_timer, (unsigned long) pdev);
+	timer_setup(&bf54x_kpad->timer, bfin_kpad_timer, 0);
 
 	bfin_write_KPAD_PRESCALE(bfin_kpad_get_prescale(TIME_SCALE));
 
@@ -326,14 +323,13 @@ out0:
 	kfree(bf54x_kpad->keycode);
 out:
 	kfree(bf54x_kpad);
-	platform_set_drvdata(pdev, NULL);
 
 	return error;
 }
 
-static int __devexit bfin_kpad_remove(struct platform_device *pdev)
+static int bfin_kpad_remove(struct platform_device *pdev)
 {
-	struct bfin_kpad_platform_data *pdata = pdev->dev.platform_data;
+	struct bfin_kpad_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct bf54x_kpad *bf54x_kpad = platform_get_drvdata(pdev);
 
 	del_timer_sync(&bf54x_kpad->timer);
@@ -346,7 +342,6 @@ static int __devexit bfin_kpad_remove(struct platform_device *pdev)
 
 	kfree(bf54x_kpad->keycode);
 	kfree(bf54x_kpad);
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
@@ -384,29 +379,16 @@ static int bfin_kpad_resume(struct platform_device *pdev)
 # define bfin_kpad_resume  NULL
 #endif
 
-struct platform_driver bfin_kpad_device_driver = {
+static struct platform_driver bfin_kpad_device_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
-		.owner	= THIS_MODULE,
 	},
 	.probe		= bfin_kpad_probe,
-	.remove		= __devexit_p(bfin_kpad_remove),
+	.remove		= bfin_kpad_remove,
 	.suspend	= bfin_kpad_suspend,
 	.resume		= bfin_kpad_resume,
 };
-
-static int __init bfin_kpad_init(void)
-{
-	return platform_driver_register(&bfin_kpad_device_driver);
-}
-
-static void __exit bfin_kpad_exit(void)
-{
-	platform_driver_unregister(&bfin_kpad_device_driver);
-}
-
-module_init(bfin_kpad_init);
-module_exit(bfin_kpad_exit);
+module_platform_driver(bfin_kpad_device_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
