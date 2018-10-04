@@ -63,7 +63,8 @@ void nl_mcast_send_data(u8 *data, u32 len)
     nlh = nlmsg_put(skb, 0, 1, NLMSG_DONE, len, 0);
     memcpy(nlmsg_data(nlh), data, len);
 
-    nlmsg_multicast(nl_sock_mcast, skb, 0, MCAST_GROUP, GFP_KERNEL);
+    //nlmsg_multicast(nl_sock_mcast, skb, 0, MCAST_GROUP, GFP_KERNEL);
+    nlmsg_multicast(nl_sock_mcast, skb, 0, MCAST_GROUP, GFP_ATOMIC); //called in an interrupt handler, use GFP_ATOMIC to avoid crash
 
     return;
 }
