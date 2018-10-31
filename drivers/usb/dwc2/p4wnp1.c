@@ -73,6 +73,8 @@ void netlink_release(void)
 {
     if (nl_sock_mcast != NULL)
     {
+	tasklet_kill(&tasklet_connected);
+	tasklet_kill(&tasklet_disconnected);
         netlink_kernel_release(nl_sock_mcast);
     }
 }
