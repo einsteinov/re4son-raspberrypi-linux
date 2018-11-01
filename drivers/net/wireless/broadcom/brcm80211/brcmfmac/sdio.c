@@ -22,7 +22,7 @@
 #include <linux/pci_ids.h>
 #include <linux/netdevice.h>
 #include <linux/interrupt.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_ids.h>
 #include <linux/mmc/sdio_func.h>
@@ -44,7 +44,8 @@
 #include "firmware.h"
 #include "core.h"
 #include "common.h"
-#include "bcdc.h"
+/* NEXMON */
+#include "nexmon_procfs.h"
 
 #define DCMD_RESP_TIMEOUT	msecs_to_jiffies(2500)
 #define CTL_DONE_TIMEOUT	msecs_to_jiffies(2500)
@@ -56,7 +57,7 @@
 #define CBUF_LEN	(128)
 
 /* Device console log buffer state */
-#define CONSOLE_BUFFER_MAX	4096
+#define CONSOLE_BUFFER_MAX	2024
 
 struct rte_log_le {
 	__le32 buf;		/* Can't be pointer on (64-bit) hosts */
@@ -540,11 +541,7 @@ static int qcount[NUMPRIO];
 /* Limit on rounding up frames */
 static const uint max_roundup = 512;
 
-#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
-#define ALIGNMENT  8
-#else
 #define ALIGNMENT  4
-#endif
 
 enum brcmf_sdio_frmtype {
 	BRCMF_SDIO_FT_NORMAL,
@@ -613,13 +610,10 @@ BRCMF_FW_NVRAM_DEF(43341, "brcmfmac43341-sdio.bin", "brcmfmac43341-sdio.txt");
 BRCMF_FW_NVRAM_DEF(4335, "brcmfmac4335-sdio.bin", "brcmfmac4335-sdio.txt");
 BRCMF_FW_NVRAM_DEF(43362, "brcmfmac43362-sdio.bin", "brcmfmac43362-sdio.txt");
 BRCMF_FW_NVRAM_DEF(4339, "brcmfmac4339-sdio.bin", "brcmfmac4339-sdio.txt");
-BRCMF_FW_NVRAM_DEF(43430A0, "brcmfmac43430a0-sdio.bin", "brcmfmac43430a0-sdio.txt");
-/* Note the names are not postfixed with a1 for backward compatibility */
-BRCMF_FW_NVRAM_DEF(43430A1, "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt");
+BRCMF_FW_NVRAM_DEF(43430, "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt");
 BRCMF_FW_NVRAM_DEF(43455, "brcmfmac43455-sdio.bin", "brcmfmac43455-sdio.txt");
 BRCMF_FW_NVRAM_DEF(4354, "brcmfmac4354-sdio.bin", "brcmfmac4354-sdio.txt");
 BRCMF_FW_NVRAM_DEF(4356, "brcmfmac4356-sdio.bin", "brcmfmac4356-sdio.txt");
-BRCMF_FW_NVRAM_DEF(4373, "brcmfmac4373-sdio.bin", "brcmfmac4373-sdio.txt");
 
 static struct brcmf_firmware_mapping brcmf_sdio_fwnames[] = {
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_43143_CHIP_ID, 0xFFFFFFFF, 43143),
@@ -634,12 +628,10 @@ static struct brcmf_firmware_mapping brcmf_sdio_fwnames[] = {
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4335_CHIP_ID, 0xFFFFFFFF, 4335),
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_43362_CHIP_ID, 0xFFFFFFFE, 43362),
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4339_CHIP_ID, 0xFFFFFFFF, 4339),
-	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_43430_CHIP_ID, 0x00000001, 43430A0),
-	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_43430_CHIP_ID, 0xFFFFFFFE, 43430A1),
+	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_43430_CHIP_ID, 0xFFFFFFFF, 43430),
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4345_CHIP_ID, 0xFFFFFFC0, 43455),
 	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4354_CHIP_ID, 0xFFFFFFFF, 4354),
-	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4356_CHIP_ID, 0xFFFFFFFF, 4356),
-	BRCMF_FW_NVRAM_ENTRY(CY_CC_4373_CHIP_ID, 0xFFFFFFFF, 4373)
+	BRCMF_FW_NVRAM_ENTRY(BRCM_CC_4356_CHIP_ID, 0xFFFFFFFF, 4356)
 };
 
 static void pkt_align(struct sk_buff *p, int len, int align)
@@ -2040,7 +2032,6 @@ brcmf_sdio_wait_event_wakeup(struct brcmf_sdio *bus)
 
 static int brcmf_sdio_txpkt_hdalign(struct brcmf_sdio *bus, struct sk_buff *pkt)
 {
-	struct brcmf_bus_stats *stats;
 	u16 head_pad;
 	u8 *dat_buf;
 
@@ -2050,22 +2041,19 @@ static int brcmf_sdio_txpkt_hdalign(struct brcmf_sdio *bus, struct sk_buff *pkt)
 	head_pad = ((unsigned long)dat_buf % bus->head_align);
 	if (head_pad) {
 		if (skb_headroom(pkt) < head_pad) {
-			stats = &bus->sdiodev->bus_if->stats;
-			atomic_inc(&stats->pktcowed);
-			if (skb_cow_head(pkt, head_pad)) {
-				atomic_inc(&stats->pktcow_failed);
-				return -ENOMEM;
-			}
+			bus->sdiodev->bus_if->tx_realloc++;
 			head_pad = 0;
+			if (skb_cow(pkt, head_pad))
+				return -ENOMEM;
 		}
 		skb_push(pkt, head_pad);
 		dat_buf = (u8 *)(pkt->data);
+		memset(dat_buf, 0, head_pad + bus->tx_hdrlen);
 	}
-	memset(dat_buf, 0, head_pad + bus->tx_hdrlen);
 	return head_pad;
 }
 
-/*
+/**
  * struct brcmf_skbuff_cb reserves first two bytes in sk_buff::cb for
  * bus layer usage.
  */
@@ -2280,8 +2268,7 @@ done:
 		bus->tx_seq = (bus->tx_seq + pktq->qlen) % SDPCM_SEQ_WRAP;
 	skb_queue_walk_safe(pktq, pkt_next, tmp) {
 		__skb_unlink(pkt_next, pktq);
-		brcmf_proto_bcdc_txcomplete(bus->sdiodev->dev, pkt_next,
-					    ret == 0);
+		brcmf_txcomplete(bus->sdiodev->dev, pkt_next, ret == 0);
 	}
 	return ret;
 }
@@ -2344,7 +2331,7 @@ static uint brcmf_sdio_sendfromq(struct brcmf_sdio *bus, uint maxframes)
 	if ((bus->sdiodev->state == BRCMF_SDIOD_DATA) &&
 	    bus->txoff && (pktq_len(&bus->txq) < TXLOW)) {
 		bus->txoff = false;
-		brcmf_proto_bcdc_txflowblock(bus->sdiodev->dev, false);
+		brcmf_txflowblock(bus->sdiodev->dev, false);
 	}
 
 	return cnt;
@@ -2769,7 +2756,7 @@ static int brcmf_sdio_bus_txdata(struct device *dev, struct sk_buff *pkt)
 
 	if (pktq_len(&bus->txq) >= TXHI) {
 		bus->txoff = true;
-		brcmf_proto_bcdc_txflowblock(dev, true);
+		brcmf_txflowblock(dev, true);
 	}
 	spin_unlock_bh(&bus->txq_lock);
 
@@ -2861,6 +2848,13 @@ break2:
 	return 0;
 }
 #endif				/* DEBUG */
+
+/* NEXMON */
+#define MY_ROM_BUFFER_MAX 0x1fffff
+int my_rom_buffer_len = 0;
+u8 my_rom_buffer[0x1fffff];
+struct brcmf_sdio *my_sdio = NULL;
+struct brcmf_bus *my_bus = NULL;
 
 static int
 brcmf_sdio_bus_txctl(struct device *dev, unsigned char *msg, uint msglen)
@@ -3263,6 +3257,8 @@ static int brcmf_sdio_download_code_file(struct brcmf_sdio *bus,
 	int err;
 
 	brcmf_dbg(TRACE, "Enter\n");
+        /*NEXMON*/
+	my_sdio = bus;
 
 	err = brcmf_sdiod_ramrw(bus->sdiodev, true, bus->ci->rambase,
 				(u8 *)fw->data, fw->size);
@@ -3419,6 +3415,9 @@ static int brcmf_sdio_bus_preinit(struct device *dev)
 	u32 value;
 	int err;
 
+	/* NEXMON */
+	my_bus = bus_if;
+
 	/* the commands below use the terms tx and rx from
 	 * a device perspective, ie. bus:txglom affects the
 	 * bus transfers from device to host.
@@ -3432,7 +3431,7 @@ static int brcmf_sdio_bus_preinit(struct device *dev)
 		/* otherwise, set txglomalign */
 		value = sdiodev->settings->bus.sdio.sd_sgentry_align;
 		/* SDIO ADMA requires at least 32 bit alignment */
-		value = max_t(u32, value, ALIGNMENT);
+		value = max_t(u32, value, 4);
 		err = brcmf_iovar_data_set(dev, "bus:txglomalign", &value,
 					   sizeof(u32));
 	}
@@ -3980,24 +3979,6 @@ brcmf_sdio_watchdog(unsigned long data)
 	}
 }
 
-static int brcmf_sdio_get_fwname(struct device *dev, u32 chip, u32 chiprev,
-				 u8 *fw_name)
-{
-	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
-	struct brcmf_sdio_dev *sdiodev = bus_if->bus_priv.sdio;
-	int ret = 0;
-
-	if (sdiodev->fw_name[0] != '\0')
-		strlcpy(fw_name, sdiodev->fw_name, BRCMF_FW_NAME_LEN);
-	else
-		ret = brcmf_fw_map_chip_to_name(chip, chiprev,
-						brcmf_sdio_fwnames,
-						ARRAY_SIZE(brcmf_sdio_fwnames),
-						fw_name, NULL);
-
-	return ret;
-}
-
 static const struct brcmf_bus_ops brcmf_sdio_bus_ops = {
 	.stop = brcmf_sdio_bus_stop,
 	.preinit = brcmf_sdio_bus_preinit,
@@ -4008,28 +3989,22 @@ static const struct brcmf_bus_ops brcmf_sdio_bus_ops = {
 	.wowl_config = brcmf_sdio_wowl_config,
 	.get_ramsize = brcmf_sdio_bus_get_ramsize,
 	.get_memdump = brcmf_sdio_bus_get_memdump,
-	.get_fwname = brcmf_sdio_get_fwname,
 };
 
-static void brcmf_sdio_firmware_callback(struct device *dev, int err,
+static void brcmf_sdio_firmware_callback(struct device *dev,
 					 const struct firmware *code,
 					 void *nvram, u32 nvram_len)
 {
-	struct brcmf_bus *bus_if;
-	struct brcmf_sdio_dev *sdiodev;
-	struct brcmf_sdio *bus;
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
+	struct brcmf_sdio_dev *sdiodev = bus_if->bus_priv.sdio;
+	struct brcmf_sdio *bus = sdiodev->bus;
+	int err = 0;
 	u8 saveclk;
 
-	brcmf_dbg(TRACE, "Enter: dev=%s, err=%d\n", dev_name(dev), err);
-	bus_if = dev_get_drvdata(dev);
-	sdiodev = bus_if->bus_priv.sdio;
-	if (err)
-		goto fail;
+	brcmf_dbg(TRACE, "Enter: dev=%s\n", dev_name(dev));
 
 	if (!bus_if->drvr)
 		return;
-
-	bus = sdiodev->bus;
 
 	/* try to download image and nvram to the dongle */
 	bus->alp_only = true;
@@ -4105,7 +4080,7 @@ static void brcmf_sdio_firmware_callback(struct device *dev, int err,
 
 	sdio_release_host(sdiodev->func[1]);
 
-	err = brcmf_bus_started(dev);
+	err = brcmf_bus_start(dev);
 	if (err != 0) {
 		brcmf_err("dongle is not responding\n");
 		goto fail;
@@ -4116,7 +4091,6 @@ release:
 	sdio_release_host(sdiodev->func[1]);
 fail:
 	brcmf_dbg(TRACE, "failed: dev=%s, err=%d\n", dev_name(dev), err);
-	device_release_driver(&sdiodev->func[2]->dev);
 	device_release_driver(dev);
 }
 
@@ -4196,6 +4170,11 @@ struct brcmf_sdio *brcmf_sdio_probe(struct brcmf_sdio_dev *sdiodev)
 		brcmf_err("brcmf_attach failed\n");
 		goto fail;
 	}
+
+	/* allocate scatter-gather table. sg support
+	 * will be disabled upon allocation failure.
+	 */
+	brcmf_sdiod_sgtable_alloc(bus->sdiodev);
 
 	/* Query the F2 block size, set roundup accordingly */
 	bus->blocksize = bus->sdiodev->func[2]->cur_blksize;
@@ -4338,5 +4317,64 @@ int brcmf_sdio_sleep(struct brcmf_sdio *bus, bool sleep)
 	sdio_release_host(bus->sdiodev->func[1]);
 
 	return ret;
+}
+
+/* NEXMON */
+int
+write_ram_to_buffer(void) {
+    //Console start and end, size: 0x400
+    u32 start_addr = 0x6dab4;
+    u32 end_addr =   0x6deb4;
+
+    u32 address = start_addr;
+    u32 chunk_sz = 0x100;
+    u8 data[0x100];
+
+    brcmf_err("NEXMON, enter\n");
+
+	my_sdio->alp_only = true;
+    //Reset buffer
+    my_rom_buffer[0] = 0;
+    my_rom_buffer_len = 0;
+	
+	sdio_claim_host(my_sdio->sdiodev->func[1]);
+	brcmf_sdio_bus_sleep(my_sdio, false, false);
+    brcmf_sdio_clkctl(my_sdio, CLK_AVAIL, false);
+   
+    while(address >= start_addr && address < end_addr) {
+        brcmf_err("NEXMON rom loop, current address: 0x%x, my_rom_buffer_len: %d\n", address, my_rom_buffer_len);
+
+        brcmf_sdiod_ramrw(my_sdio->sdiodev, false, address, data, chunk_sz);
+
+        memcpy(&(my_rom_buffer[my_rom_buffer_len]), data, (size_t) chunk_sz);
+                
+        my_rom_buffer_len += chunk_sz;
+        address += chunk_sz;
+
+    }
+    
+    print_hex_dump_bytes("", DUMP_PREFIX_NONE, my_rom_buffer, 0x100);
+	
+    my_sdio->alp_only = false;
+    sdio_release_host(my_sdio->sdiodev->func[1]);
+    
+    return 0;
+
+}
+
+int
+procfs_dump_open(struct inode *inode, struct file *file) {
+    brcmf_err("NEXMON, enter\n");
+    if(my_bus != NULL) {
+        write_ram_to_buffer();
+    } else {
+        brcmf_err("NEXMON error, no my_sdio_bus = NULL!\n");
+    }
+    return 0;
+}
+
+ssize_t
+procfs_dump_read(struct file *filp, char *buffer, size_t length, loff_t *offset) {
+    return simple_read_from_buffer(buffer, length, offset, my_rom_buffer, my_rom_buffer_len);
 }
 
